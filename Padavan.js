@@ -52,10 +52,23 @@ $ui.render({
                 make.top.bottom.equalTo(0)
                 make.right.inset(10)
               }
+            }],
+            actions: [{
+              title: "WOL",
+              handler: function(sender, indexPath) {
+                var device = sender.object(indexPath)
+                $console.info(device)
+                wol(device.mac.text)
+              }
             }]
           },
           layout: $layout.fill,
           events: {
+            didSelect: function(sender, indexPath, data) {
+              var device = sender.object(indexPath)
+              deviceRecord.data = device
+              deviceRecord.render()
+            },
             pulled: function(sender) {
               refetch()
             }
@@ -98,6 +111,241 @@ $ui.render({
 function refetch() {
   system_status.fetch()
   device_status.fetch()
+}
+
+function wol(mac) {
+  $console.info("DEBUG WOL " + mac)
+  $http.get({
+    url: config.data.host + "/wol_action.asp?dstmac=" + mac,
+    header: {
+      Authorization: config.data.Authorization
+    },
+    handler: function(resp) {
+      $console.info(resp.data)
+      if (resp.data.wol_mac == mac) {
+        $ui.toast("已发送唤醒请求")
+      } else {
+        $ui.error("唤醒请求发送失败")
+      }
+    }
+  })
+}
+
+function remoteConsole(cmd, callback) {
+  $http.post({
+    url: config.data.host + "/apply.cgi",
+    header: {
+      Authorization: config.data.Authorization,
+      "Content-Type": 'application/x-www-form-urlencoded'
+    },
+    body: {
+      action_mode: " SystemCmd ",
+      SystemCmd: cmd
+    },
+    handler: function(resp) {
+      $console.info(resp.data)
+      if (isLogined(resp.data)) {
+        $ui.error("已在其他设备登录,请退出后再试")
+        isConnected = false
+        return
+      }
+      $http.get({
+        url: config.data.host + "/console_response.asp",
+        header: {
+          Authorization: config.data.Authorization
+        },
+        handler: function(resp) {
+          $console.info(resp.data)
+          if (isLogined(resp.data)) {
+            $ui.error("已在其他设备登录,请退出后再试")
+            isConnected = false
+            return
+          }
+          callback(resp.data)
+        }
+      })
+
+    }
+  })
+}
+
+var deviceRecord = {
+  data: {},
+  fetch: function() {
+    var _this = this
+    var mac = this.data.mac.text.replace(/:/g, "")
+    
+    var date = formatDateTime(this.data.date).replace(/-/g,'').slice(0,8)
+    $console.info("DEBUG DATE " + date)
+    remoteConsole("cat /tmp/deviced/" + date + "/" + mac, function(data) {
+      _this.renderData(data)
+    })
+  },
+  render: function() {
+    $ui.push(this.view)
+    if(!this.data.date){
+      this.data.date = new Date()
+    }
+    $("record_date").text = formatDateTime(this.data.date).slice(0,10)
+    this.fetch()
+  },
+  renderData: function(respData) {
+    if(respData.indexOf("No such file") >= 0) {
+      this.renderNothing()
+      return
+    }
+    
+    var records = respData.replace(/\r/g, '').split("\n")
+    if(!records[records.length-1]){
+      records.pop()
+    }
+    if(records.length == 0) {
+      this.renderNothing()
+      return
+    }
+    $("empty_record").hidden = true
+ 
+    $console.info(records)
+    var data = []
+    for (var record of records) {
+      var recordArr = record.split(",")
+      var rec_status = (recordArr[0] == 0 ? "上线" : "下线" )
+      var rec_time = new Date(parseInt(recordArr[1]) * 1000)
+      rec_time = formatDateTime(rec_time).replace(/[-|\ ]/g,'').slice(8,13)
+      data.push({
+        record_status: {
+          text: rec_status + ": " + rec_time
+        }
+      })
+    }
+    $("record_list").data = data
+    $("record_list").endRefreshing()
+  },
+  renderNothing: function(){
+    $ui.toast("nothing")
+    $("empty_record").hidden = false
+    $("record_list").data = []
+    $("record_list").endRefreshing()
+  },
+  view: {
+    props: {
+      title: "连接报告"
+    },
+    views: [
+      {
+        type: "view",
+        props: {
+          bgcolor: $color("#eeeeee"),
+        },
+        layout: function(make, view) {
+          make.top.equalTo(0)
+          make.width.equalTo(view.super.width)
+          make.height.equalTo(120)
+        },
+        views: [
+          {
+            type: "label",
+            props: {
+              id: "record_date",
+              font: $font(24)
+            },
+            layout: function(make, view) {
+              make.center.equalTo(view.super)
+            }
+          },
+          {
+            type: "button",
+            props: {
+              title: "前一天"
+            },
+            layout: function(make, view) {
+              make.centerY.equalTo(view.super)
+              make.right.equalTo($("record_date").left)
+              make.width.equalTo(80)
+            },
+            events: {
+              tapped: function(sender) {
+                deviceRecord.data.date = new Date(deviceRecord.data.date.getTime() - 24*60*60*1000)
+                $("record_date").text = formatDateTime(deviceRecord.data.date).slice(0,10)
+                deviceRecord.fetch()
+              }
+            }
+          },
+          {
+            type: "button",
+            props: {
+              title: "后一天"
+            },
+            layout: function(make, view) {
+              make.centerY.equalTo(view.super)
+              make.left.equalTo($("record_date").right)
+              make.width.equalTo(80)
+            },
+            events: {
+              tapped: function(sender) {
+                deviceRecord.data.date = new Date(deviceRecord.data.date.getTime() + 24*60*60*1000)
+                $("record_date").text = formatDateTime(deviceRecord.data.date).slice(0,10)
+                deviceRecord.fetch()
+              }
+            }
+          }
+        ]
+      },
+      {
+        type: "list",
+        props: {
+          id: "record_list",
+          rowHeight: 48.0,
+          separatorInset: $insets(0, 5, 0, 0),
+          template: [
+            {
+              type: "label",
+              props: {
+                id: "record_status",
+                font: $font(18),
+                lines: 0
+              },
+              layout: function(make, view) {
+                make.center.equalTo(0)
+                make.top.bottom.equalTo(0)
+              }
+            }
+          ]
+        },
+        layout: function(make, view) {
+          make.top.equalTo(120)
+          make.width.equalTo(view.super.width)
+          make.bottom.equalTo(0)
+        },
+        events: {
+          pulled: function(sender) {
+            deviceRecord.fetch()
+          }
+        }
+      },{
+        type: "label",
+        props: {
+          id: "empty_record",
+          hidden: true,
+          text: "找不到连接记录",
+          lines: 0,
+          align: $align.center
+        },
+        layout: function(make, view) {
+          make.left.right.top.bottom.inset(20)
+        }
+      },
+      {
+        type: "spinner",
+        props: {
+          on: true
+        },
+        layout: function(make, view) {
+          make.center.equalTo(view.super)
+        }
+      }
+    ]
+  }
 }
 
 var system_status = {
@@ -216,6 +464,9 @@ var device_status = {
       data.push({
         name: {
           text: "[在线] " + device[2] + " IP: " + device[0]
+        },
+        mac: {
+          text: device[1]
         }
       })
     }
@@ -224,6 +475,9 @@ var device_status = {
       data.push({
         name: {
           text: "[离线] " + device[2]
+        },
+        mac: {
+          text: device[1]
         }
       })
     }
@@ -288,11 +542,9 @@ var config = {
         rowHeight: 64.0,
         data: [{
           title: "配置",
-          rows: [
-            {
+          rows: [{
               type: "view",
-              views: [
-                {
+              views: [{
                   type: "label",
                   props: {
                     text: "后台地址",
@@ -326,8 +578,7 @@ var config = {
             },
             {
               type: "view",
-              views: [
-                {
+              views: [{
                   type: "label",
                   props: {
                     text: "用户名",
@@ -360,8 +611,7 @@ var config = {
             },
             {
               type: "view",
-              views: [
-                {
+              views: [{
                   type: "label",
                   props: {
                     text: "密码",
@@ -472,4 +722,19 @@ function bytesToSize(bytes, precision) {
     return (bytes / gigabyte).toFixed(precision) + ' GB';
   else
     return (bytes / terabyte).toFixed(precision) + ' TB';
+}
+
+function formatDateTime(date){
+  var year = date.getFullYear()
+  var month = date.getMonth() + 1
+  month = (month > 9 ? "" : "0") + month
+  var day = date.getDate()
+  day = (day > 9 ? "" : "0") + day
+  var hours = date.getHours()
+  hours = (hours > 9 ? "" : "0") + hours
+  var minutes = date.getMinutes();
+  minutes = (minutes > 9 ? "" : "0") + minutes
+  var seconds = date.getSeconds()
+  seconds = (seconds > 9 ? "" : "0") + seconds
+  return year + "-" + month + "-" + day + " " + hours + ":" + minutes + ":" + seconds
 }
