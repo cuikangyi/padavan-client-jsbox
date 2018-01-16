@@ -23,6 +23,7 @@ $ui.render({
           selectable: false,
           text: "",
           bgcolor: $color("#eeeeee"),
+          scrollEnabled: false,
         },
         layout: $layout.fill
       }]
@@ -131,44 +132,6 @@ function wol(mac) {
   })
 }
 
-function remoteConsole(cmd, callback) {
-  $http.post({
-    url: config.data.host + "/apply.cgi",
-    header: {
-      Authorization: config.data.Authorization,
-      "Content-Type": 'application/x-www-form-urlencoded'
-    },
-    body: {
-      action_mode: " SystemCmd ",
-      SystemCmd: cmd
-    },
-    handler: function(resp) {
-      $console.info(resp.data)
-      if (isLogined(resp.data)) {
-        $ui.error("已在其他设备登录,请退出后再试")
-        isConnected = false
-        return
-      }
-      $http.get({
-        url: config.data.host + "/console_response.asp",
-        header: {
-          Authorization: config.data.Authorization
-        },
-        handler: function(resp) {
-          $console.info(resp.data)
-          if (isLogined(resp.data)) {
-            $ui.error("已在其他设备登录,请退出后再试")
-            isConnected = false
-            return
-          }
-          callback(resp.data)
-        }
-      })
-
-    }
-  })
-}
-
 var deviceRecord = {
   data: {},
   fetch: function() {
@@ -177,8 +140,15 @@ var deviceRecord = {
     
     var date = formatDateTime(this.data.date).replace(/-/g,'').slice(0,8)
     $console.info("DEBUG DATE " + date)
-    remoteConsole("cat /tmp/deviced/" + date + "/" + mac, function(data) {
-      _this.renderData(data)
+    $http.get({
+      url: config.data.host + "/custom/c7i/deviced/" + date + "/" + mac + ".html",
+      header: {
+        Authorization: config.data.Authorization
+      },
+      handler: function(resp) {
+        $console.info(resp.data)
+        _this.renderData(resp.data)
+      }
     })
   },
   render: function() {
@@ -190,41 +160,30 @@ var deviceRecord = {
     this.fetch()
   },
   renderData: function(respData) {
-    if(respData.indexOf("No such file") >= 0) {
-      this.renderNothing()
-      return
-    }
-    
     var records = respData.replace(/\r/g, '').split("\n")
     if(!records[records.length-1]){
       records.pop()
     }
     if(records.length == 0) {
-      this.renderNothing()
-      return
+      $("empty_record").hidden = false
+      $("record_list").data = [{}]
+      $("record_list").delete(0)
+    }else {
+      $("empty_record").hidden = true
+      var data = []
+      for (var record of records) {
+        var recordArr = record.split(",")
+        var rec_status = (recordArr[0] == 0 ? "上线" : "下线" )
+        var rec_time = new Date(parseInt(recordArr[1]) * 1000)
+        rec_time = formatDateTime(rec_time).replace(/[-|\ ]/g,'').slice(8,13)
+        data.push({
+          record_status: {
+            text: rec_status + ": " + rec_time
+          }
+        })
+      }
+      $("record_list").data = data
     }
-    $("empty_record").hidden = true
- 
-    $console.info(records)
-    var data = []
-    for (var record of records) {
-      var recordArr = record.split(",")
-      var rec_status = (recordArr[0] == 0 ? "上线" : "下线" )
-      var rec_time = new Date(parseInt(recordArr[1]) * 1000)
-      rec_time = formatDateTime(rec_time).replace(/[-|\ ]/g,'').slice(8,13)
-      data.push({
-        record_status: {
-          text: rec_status + ": " + rec_time
-        }
-      })
-    }
-    $("record_list").data = data
-    $("record_list").endRefreshing()
-  },
-  renderNothing: function(){
-    $ui.toast("nothing")
-    $("empty_record").hidden = false
-    $("record_list").data = []
     $("record_list").endRefreshing()
   },
   view: {

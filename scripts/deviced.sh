@@ -1,6 +1,6 @@
 #!/bin/sh
 
-deviced_dir=/tmp/deviced
+deviced_dir=/tmp/c7i/deviced
 
 timestamp=$(date "+%s")
 
@@ -20,13 +20,16 @@ do
     mac=`echo $line | awk -F ',' '{print $2}' | sed s/://g`
     name=`echo $line | awk -F ',' '{print $3}'`
     status=`echo $line | awk -F ',' '{print $6}'`
-    devicefile=$today_dir/$mac
+    devicefile=$today_dir/$mac.html
+
     if [ ! -f $devicefile ]; then
-        touch $devicefile
+        last_status=
+    else
+        last_status=`tail -1 $devicefile`
     fi
-    last_status=`tail -1 $devicefile`
+
     if [ x"$last_status" = x ]; then
-        if [ $status != 1 ]; then
+        if [ $status == 0 ]; then
             echo "$status,$timestamp" > $devicefile
         fi
     else
